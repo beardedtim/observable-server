@@ -39,42 +39,47 @@ const createRegexFromExpressSyntax = (route, keys = []) =>
  * @return {function(Object -> Object)} - A function that expects our needed shape and returns an object with the query and param
  */
 const addParamArgs = path => {
-  return ({ request, ...args }) => ({
-    ...args,
-    request: (() => {
-      const keys = []
-      const re = createRegexFromExpressSyntax(path, keys)
-      const result = re.exec(request.url).slice(1)
-      if (!result || !result.length) {
-        return {
-          params: {},
-          query: {}
-        }
+  return ({ request, ...args }) => {
+    const keys = []
+    const re = createRegexFromExpressSyntax(path, keys)
+    const result = re.exec(request.url).slice(1)
+    if (!result || !result.length) {
+      return {
+        ...args,
+        request: Object.assign({}, request, {
+          query: {},
+          params: {}
+        })
       }
-      const lastIndex = result.length - 1
-      const lastItem = result[lastIndex]
-      const queryIndex = lastItem.indexOf('?')
-      let query = {}
+    }
+    const lastIndex = result.length - 1
+    const lastItem = result[lastIndex]
+    const queryIndex = lastItem.indexOf('?')
+    let query = {}
 
-      if (queryIndex >= 0 && result) {
-        const nonQueryPath = lastItem.slice(0, queryIndex)
-        const queryStr = lastItem.slice(queryIndex)
-        query = parse(queryStr)
-        result[lastIndex] = nonQueryPath
-      }
+    if (queryIndex >= 0 && result) {
+      const nonQueryPath = lastItem.slice(0, queryIndex)
+      const queryStr = lastItem.slice(queryIndex)
+      query = parse(queryStr)
+      result[lastIndex] = nonQueryPath
+    }
 
-      return Object.assign({}, request, {
-        params: keys.reduce(
-          (acc, { name }, i) => ({
-            ...acc,
-            [name]: result[i]
-          }),
-          {}
-        ),
-        query
-      })
-    })()
-  })
+    const newReq = Object.assign({}, request, {
+      params: keys.reduce(
+        (acc, { name }, i) => ({
+          ...acc,
+          [name]: result[i]
+        }),
+        {}
+      ),
+      query
+    })
+
+    return {
+      ...args,
+      request: newReq
+    }
+  }
 }
 
 /**
@@ -87,13 +92,47 @@ const filterByMethod = (method = '*') => ({ request }) =>
   request.method.toUpperCase() === method.toUpperCase() || method === '*'
 
 /**
+ * Parse the incoming request body
+ *
+ * @param {IncomingRequest} param
+ * @return {Observable} - An observable with the body
+ */
+const transformBody = ({ request, ...args }) =>
+  Rx.Observable.create(observer => {
+    let data = ''
+
+    request.on('data', e => {
+      data += e.toString()
+    })
+
+    request.on('end', e => {
+      try {
+        const jsonData = JSON.parse(data) // try to treat it as JSON data
+        observer.next(
+          Object.assign({}, args, {
+            request: Object.assign(request, { body: jsonData })
+          })
+        )
+      } catch (e) {
+        observer.next(
+          Object.assign({}, args, {
+            request: Object.assign(request, { body: data }) // If it threw, treat it as string
+          })
+        )
+      } finally {
+        observer.complete() // Alwys say you're done
+      }
+    })
+  })
+
+/**
  * Our server options
  *
  * @typedef {Object} ServerOptions
  * @property {number} port - The port to listen on
  * @property {function} preTransform - A function that takes in a path and returns a function to modify actions on that path
  * @property {function} initialTRansformation - A function that takes in the initial request and transform it to the needed values
- * @property {function} send - A function that given socket, msg, and end sends the message a socket and optionally closes the socket
+ * @property {function} withSend - A function that, given a modified request object, adds your `send` function to the request object
  */
 
 /**
@@ -105,15 +144,18 @@ const DEFAULT_OPTS = {
   port: 5000,
   preTransform: addParamArgs,
   initialTransformation: transformRequestToAction,
-  send: socket => (msg, end = true) => {
-    const action = typeof msg === 'string' ? msg : JSON.stringify(msg)
+  withSend: obj => ({
+    ...obj,
+    send: (msg, end = true) => {
+      const action = typeof msg === 'string' ? msg : JSON.stringify(msg)
 
-    socket.write(action)
+      obj.socket.write(action)
 
-    if (end) {
-      socket.end()
+      if (end) {
+        obj.socket.end()
+      }
     }
-  }
+  })
 }
 
 const createServer = (opts = {}) => {
@@ -139,15 +181,13 @@ const createServer = (opts = {}) => {
    */
   const on = ({ url, method }) =>
     events
-      .on(createRegexFromExpressSyntax(url))
-      .filter(filterByMethod(method))
-      .map(config.preTransform(url))
-      .map(obj => ({
-        ...obj,
-        send: config.send(obj.socket)
-      }))
+      .on(createRegexFromExpressSyntax(url)) // convert `url` to regex
+      .filter(filterByMethod(method)) // Only care about specific method
+      .flatMap(transformBody) // add a body to the transformed values
+      .map(config.preTransform(url)) // transform it for the rest of our system
+      .map(config.withSend) // add the send value to the transformed values
 
-  serverInstance.listen(config.port)
+  serverInstance.listen(config.port) // Listen on specific port
 
   return {
     on,

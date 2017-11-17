@@ -5,22 +5,23 @@ const server = createServer({
   port: 5001
 })
 
-const getUser = server.on({
-  url: '/users/:id',
-  method: 'GET'
+const db = {
+  save: {
+    User: data => Promise.resolve(data)
+  }
+}
+
+const userPostRequests = server.on({
+  url: '/users',
+  method: 'post'
 })
 
-const getUserFromDB = id =>
-  Promise.resolve({
-    _id: id,
-    name: 'John Snow'
-  })
-
-getUser
-  .flatMap(({ request: { params: { id: userId } }, send }) =>
-    Observable.fromPromise(getUserFromDB(userId)).map(user => ({
-      data: user,
-      send
-    }))
+const userRequestSub = userPostRequests
+  .flatMap(
+    ({ request: { params, body }, send }) =>
+      console.log(body, 'body') ||
+      Observable.fromPromise(db.save.User(body)).map(data => ({ data, send }))
   )
-  .subscribe(({ data, send }) => send(data))
+  .subscribe(({ send, data }) => {
+    send({ data })
+  })
