@@ -5,12 +5,12 @@
 ## Usage
 
 ```js
-const createServer = require('./index.js')
+const createServer = require('observable-server')
 const { Observable } = require('rxjs')
 
 // OR
 
-import createServer from './index.js'
+import createServer from 'observable-server'
 import { Observable } from 'rxjs'
 
 const server = createServer({
