@@ -17,10 +17,8 @@ const userPostRequests = server.on({
 })
 
 const userRequestSub = userPostRequests
-  .flatMap(
-    ({ request: { params, body }, send }) =>
-      console.log(body, 'body') ||
-      Observable.fromPromise(db.save.User(body)).map(data => ({ data, send }))
+  .flatMap(({ request: { params, body }, send }) =>
+    Observable.fromPromise(db.save.User(body)).map(data => ({ data, send }))
   )
   .subscribe(({ send, data }) => {
     send({ data })
