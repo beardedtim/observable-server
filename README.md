@@ -36,3 +36,17 @@ const userRequestSub = userPostRequests
     send({ data }) // Send result back to user
   })
 ```
+
+## Demo
+
+```console
+$ git clone git@github.com:beardedtim/observable-server.git
+
+$ cd observable-server
+
+$ yarn
+
+$ npx nodemon demo.js
+```
+
+This should start a server at localhost:5001 with a POST handler for `/users` that will return the given `body` as `data`
