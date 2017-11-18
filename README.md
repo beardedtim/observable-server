@@ -21,8 +21,8 @@ server
 `createServer` is the only export from this package. It is a function that takes an `options` object and returns a `ServerInterface`, both of which are defined below.
 
 * `options`: The options for our server
-  - `port`: The port to listen on
-  - `pre`: An HoF that will be given `RouteOptions` and return an rxjs `lettable` function to run before each route handler
+  - `port`: The port to listen on. Defaults to `5000`
+  - `pre`: An HoF that will be given `RouteOptions` and return an rxjs `lettable` function to run before each route handler. See `./index.js` export for `preprocessors` that are applied by default.
 * `ServerInterface`: The interface for our server stream
   - `on`: A function that, given a `RouteOptions` shape, returns an observable
     -  `RouteOptions`
