@@ -39,6 +39,12 @@ const createRegexFromExpressSyntax = (route, keys = []) =>
  */
 
 const getParamsFromRequest = (baseUrl, { path }) => {
+  if (!path) {
+    throw new Error(
+      'request.path is not defined. Please ensure that you have added a path key to the request object before calling this processor'
+    )
+  }
+
   const keys = []
   const re = createRegexFromExpressSyntax(baseUrl, keys)
   const result = (re.exec(path) || []).slice(1)
@@ -101,12 +107,51 @@ const addResponseHelpers = routeOptions => obs =>
 const filterByMethod = routeOptions => obs =>
   obs.filter(({ request }) => {
     const { path, method: reqMethod } = request
-
+    const { method: routeMethod = '*' } = routeOptions
     return (
       pathToRegex(path) &&
-      (reqMethod.toLowerCase() === routeOptions.method.toLowerCase() ||
-        routeOptions.method === '*')
+      (reqMethod.toLowerCase() === routeMethod.toLowerCase() ||
+        routeMethod === '*')
     )
+  })
+
+const parseJSON = ({ request, ...args }) =>
+  Rx.Observable.create(observer => {
+    let body = ''
+    request.on('data', data => {
+      body += data
+    })
+
+    request.on('end', () => {
+      observer.next({
+        request: Object.assign(request, {
+          body: JSON.parse(body)
+        }),
+        ...args
+      })
+
+      observer.complete()
+    })
+  })
+
+const parseBody = ({ parseType = 'json' } = {}) => obs =>
+  obs.flatMap(inputs => {
+    if (inputs.request.method.toLowerCase() === 'get') {
+      return Rx.Observable.of({
+        ...inputs,
+        request: Object.assign(inputs.request, {
+          body: {}
+        })
+      })
+    }
+
+    const parsers = {
+      json: parseJSON
+    }
+
+    const parser = parsers[parseType]
+
+    return parser(inputs)
   })
 
 /**
@@ -118,15 +163,16 @@ const filterByMethod = routeOptions => obs =>
 
 const standardDataTransforms = routeOptions =>
   compose(
-    filterByMethod(routeOptions),
     addResponseHelpers(routeOptions),
+    filterByMethod(routeOptions),
     addParams(routeOptions),
-    addQueryAndPath(routeOptions)
+    addQueryAndPath(routeOptions),
+    parseBody(routeOptions)
   )
 
 const DEFAULT_OPTS = {
   port: 5000,
-  pre: () => obs => obs
+  pre: standardDataTransforms
 }
 
 /**
@@ -141,20 +187,28 @@ const createServer = opts => {
   const requestStream = new Rx.Subject()
 
   const server = http.createServer((request, response) => {
-    requestStream.next({ request, response })
+    requestStream.next({
+      request,
+      response
+    })
   })
 
   server.listen(port)
 
   return {
-    on: routeOptions =>
-      requestStream
-        .let(standardDataTransforms(routeOptions))
-        .let(pre(routeOptions))
+    on: routeOptions => requestStream.let(pre(routeOptions))
   }
 }
 
-module.exports = createServer
+module.exports = Object.assign(createServer, {
+  preprocessors: {
+    filterByMethod,
+    addResponseHelpers,
+    addParams,
+    addQueryAndPath,
+    parseBody
+  }
+})
 
 /**
  * Basic Observable Interface

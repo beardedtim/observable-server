@@ -21,7 +21,8 @@
     "rxjs": "^5.5.2"
   },
   "devDependencies": {
-    "nodemon": "^1.12.1"
+    "nodemon": "^1.12.1",
+    "ramda": "^0.25.0"
   },
   "repository": "git@github.com:beardedtim/observable-server.git"
 }
