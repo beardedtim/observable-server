@@ -7,7 +7,7 @@
 ```js
 import createServer from 'observable-server'
 // OR
-const createServer = require('./index.js')
+const createServer = require('observable-server')
 
 const server = createServer()
 
