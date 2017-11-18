@@ -1,6 +1,6 @@
 {
   "name": "observable-server",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "main": "index.js",
   "author": "Tim Roberts <timiroberts@gmail.com>",
   "license": "MIT",
