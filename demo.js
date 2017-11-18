@@ -1,9 +1,10 @@
 const R = require('ramda')
 const createServer = require('./index.js')
 
-const { preprocessors } = createServer
+const { preprocessors } = createServer // We gain access to the internal preprocessors
 
 const models = {
+  // We mock a server
   users: {
     get: _id => Promise.resolve({ _id, name: 'John Smith', type: 'user' }),
     set: user =>
