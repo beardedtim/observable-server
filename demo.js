@@ -1,25 +1,51 @@
 const createServer = require('./index.js')
-const { Observable } = require('rxjs')
 
-const server = createServer({
-  port: 5001
-})
-
-const db = {
-  save: {
-    User: data => Promise.resolve(data)
+const models = {
+  users: {
+    get: () => Promise.resolve([])
   }
 }
 
-const userPostRequests = server.on({
-  url: '/users',
-  method: 'post'
+const getModel = collection => models[collection]
+
+const server = createServer({
+  pre: routeOptions => obs =>
+    obs.map(({ request, ...rest }) => ({
+      ...rest,
+      request: Object.assign({}, request, {
+        collection: getModel(request.params.collection) // Custom DB middleware
+      })
+    }))
 })
 
-const userRequestSub = userPostRequests
-  .flatMap(({ request: { params, body }, send }) =>
-    Observable.fromPromise(db.save.User(body)).map(data => ({ data, send }))
-  )
-  .subscribe(({ send, data }) => {
-    send({ data })
+server
+  .on({ url: '/:collection/:id', method: 'GET' })
+  .subscribe(({ request, response }) => {
+    const { collection } = request
+
+    collection.get().then(data =>
+      response.send({
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: {
+          data
+        }
+      })
+    )
   })
+
+server
+  .on({ url: '/:collection/:id', method: 'POST' })
+  .subscribe(({ request, response }) =>
+    response.send({
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: {
+        data: {
+          worked: true
+        }
+      }
+    })
+  )

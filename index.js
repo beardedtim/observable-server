@@ -1,199 +1,191 @@
 const http = require('http')
 const Rx = require('rxjs')
-const pathToRegex = require('path-to-regexp')
+const urlParser = require('url')
 const { parse } = require('query-string')
+const pathToRegex = require('path-to-regexp')
 
-const createEmitter = require('observable-emitter')
-
-/**
- * Transforms incoming requests to needed shape
- *
- * @param {Object} req - The incoming request
- * @return {Object} - The massaged shape
- */
-const transformRequestToAction = req => {
-  const { method, url } = req
-  return {
-    request: req,
-    socket: req.socket,
-    type: url
-  }
-}
+const compose = (...fns) => start =>
+  fns.reduceRight((state, fn) => fn(state), start)
 
 /**
- * Turns an express-style route into a regex
+ * A lettable function to add Query and Path
  *
- * WARNING: Affects `keys` value
- *
- * @param {string} route - Express style route
- * @param {Array<T>} keys - Keys matched on express route
- * @return {RegExp} - The regular expression matching our route
+ * @param {RouteOptions} routeOptions - Options for this route
+ * @return {function(Observable -> Observable)} - Returns a massaged version of the request object
  */
+const addQueryAndPath = routeOptions => obs =>
+  obs.map(({ request, response }) => {
+    const parsedUrl = urlParser.parse(
+      `http://${request.headers.host}${request.url}`
+    )
+    return {
+      response,
+      request: Object.assign(request, {
+        query: parse(parsedUrl.query),
+        path: parsedUrl.pathname
+      })
+    }
+  })
+
 const createRegexFromExpressSyntax = (route, keys = []) =>
   pathToRegex(route, keys)
 
 /**
- * Adds param and query to incoming request shape
+ * A lettable function to add Params
  *
- * @param {string} path
- * @return {function(Object -> Object)} - A function that expects our needed shape and returns an object with the query and param
+ * @param {string} baseUrl - Base url for this route
+ * @param {string} path - A non-query string
+ * @return {Object} - Returns an object of parameters
  */
-const addParamArgs = path => {
-  return ({ request, ...args }) => {
-    const keys = []
-    const re = createRegexFromExpressSyntax(path, keys)
-    const result = re.exec(request.url).slice(1)
-    if (!result || !result.length) {
-      return {
-        ...args,
-        request: Object.assign({}, request, {
-          query: {},
-          params: {}
-        })
-      }
-    }
-    const lastIndex = result.length - 1
-    const lastItem = result[lastIndex]
-    const queryIndex = lastItem.indexOf('?')
-    let query = {}
 
-    if (queryIndex >= 0 && result) {
-      const nonQueryPath = lastItem.slice(0, queryIndex)
-      const queryStr = lastItem.slice(queryIndex)
-      query = parse(queryStr)
-      result[lastIndex] = nonQueryPath
-    }
+const getParamsFromRequest = (baseUrl, { path }) => {
+  const keys = []
+  const re = createRegexFromExpressSyntax(baseUrl, keys)
+  const result = (re.exec(path) || []).slice(1)
 
-    const newReq = Object.assign({}, request, {
-      params: keys.reduce(
-        (acc, { name }, i) => ({
-          ...acc,
-          [name]: result[i]
-        }),
-        {}
-      ),
-      query
-    })
-
-    return {
-      ...args,
-      request: newReq
-    }
+  if (!result || !result.length) {
+    return {}
   }
+
+  return keys.reduce(
+    (acc, { name }, i) => ({
+      ...acc,
+      [name]: result[i]
+    }),
+    {}
+  )
 }
 
 /**
- * Filters incoming `request` objects by the given method type
+ * A lettable function to add Query and Path
  *
- * @param {string} method - The method to listen on
- * @return {function(* -> bool)} - A function that expects a request and returns truthy/falsy
+ * @param {RouteOptions} routeOptions - Options for this route
+ * @return {function(Observable -> Observable)} - Returns a massaged version of the request object
  */
-const filterByMethod = (method = '*') => ({ request }) =>
-  request.method.toUpperCase() === method.toUpperCase() || method === '*'
+const addParams = routeOptions => obs =>
+  obs.map(({ request, ...args }) => ({
+    ...args,
+    request: Object.assign(request, {
+      params: getParamsFromRequest(routeOptions.url, request)
+    })
+  }))
 
 /**
- * Parse the incoming request body
+ * A lettable function to add Send to response
  *
- * @param {IncomingRequest} param
- * @return {Observable} - An observable with the body
+ * @param {RouteOptions} routeOptions - Options for this route
+ * @return {function(Observable -> Observable)} - Returns a massaged version of the request object
  */
-const transformBody = ({ request, ...args }) =>
-  Rx.Observable.create(observer => {
-    let data = ''
+const addResponseHelpers = routeOptions => obs =>
+  obs.map(({ response, ...args }) => ({
+    ...args,
+    response: Object.assign(response, {
+      send: ({ headers: { code = 200, ...restHeaders } = {}, body }) => {
+        response.writeHead(code, restHeaders)
 
-    request.on('data', e => {
-      data += e.toString()
-    })
+        const action = typeof body === 'string' ? body : JSON.stringify(body)
 
-    request.on('end', e => {
-      try {
-        const jsonData = JSON.parse(data) // try to treat it as JSON data
-        observer.next(
-          Object.assign({}, args, {
-            request: Object.assign(request, { body: jsonData })
-          })
-        )
-      } catch (e) {
-        observer.next(
-          Object.assign({}, args, {
-            request: Object.assign(request, { body: data }) // If it threw, treat it as string
-          })
-        )
-      } finally {
-        observer.complete() // Alwys say you're done
+        response.write(action)
+        response.end()
       }
     })
+  }))
+
+/**
+ * A lettable function to filter by method
+ *
+ * @param {RouteOptions} routeOptions - Options for this route
+ * @return {function(Observable -> Observable)} - Returns a massaged version of the request object
+ */
+
+const filterByMethod = routeOptions => obs =>
+  obs.filter(({ request }) => {
+    const { path, method: reqMethod } = request
+
+    return (
+      pathToRegex(path) &&
+      (reqMethod.toLowerCase() === routeOptions.method.toLowerCase() ||
+        routeOptions.method === '*')
+    )
   })
 
 /**
- * Our server options
+ * A lettable function to add above handlers
  *
- * @typedef {Object} ServerOptions
- * @property {number} port - The port to listen on
- * @property {function} preTransform - A function that takes in a path and returns a function to modify actions on that path
- * @property {function} initialTransformation - A function that takes in the initial request and transform it to the needed values
- * @property {function} withSend - A function that, given a modified request object, adds your `send` function to the request object
+ * @param {RouteOptions} routeOptions - Options for this route
+ * @return {function(Observable -> Observable)} - Returns a massaged version of the request object
  */
 
-/**
- * Our defualt ServerOptions
- *
- * @type {ServerOptions}
- */
+const standardDataTransforms = routeOptions =>
+  compose(
+    filterByMethod(routeOptions),
+    addResponseHelpers(routeOptions),
+    addParams(routeOptions),
+    addQueryAndPath(routeOptions)
+  )
+
 const DEFAULT_OPTS = {
   port: 5000,
-  preTransform: addParamArgs,
-  initialTransformation: transformRequestToAction,
-  withSend: obj => ({
-    ...obj,
-    send: (msg, end = true) => {
-      const action = typeof msg === 'string' ? msg : JSON.stringify(msg)
-
-      obj.socket.write(action)
-
-      if (end) {
-        obj.socket.end()
-      }
-    }
-  }),
-  bodyParser: transformBody
+  pre: () => obs => obs
 }
 
-const createServer = (opts = {}) => {
+/**
+ * Our way of creating server interfaces
+ *
+ * @param {ServerOptions} opts - The options for this server instance
+ * @return {ServerInterface} - Our server interface
+ */
+const createServer = opts => {
   const config = Object.assign({}, DEFAULT_OPTS, opts)
+  const { port, pre } = config
+  const requestStream = new Rx.Subject()
 
-  const serverInstance = http.createServer()
-
-  const sourceStream = Rx.Observable
-    .fromEvent(serverInstance, 'request')
-    .map(config.initialTransformation)
-
-  const events = createEmitter({
-    source: sourceStream
+  const server = http.createServer((request, response) => {
+    requestStream.next({ request, response })
   })
 
-  /**
-   * Our route handler registration
-   *
-   * @param {*} param
-   * @param {string} param.url - The express-style route we want to listen for
-   * @param {string} param.method - The method we want to listen on
-   * @return {Observable} - An observable of the requests to the route we registered on
-   */
-  const on = ({ url, method }) =>
-    events
-      .on(createRegexFromExpressSyntax(url)) // convert `url` to regex
-      .filter(filterByMethod(method)) // Only care about specific method
-      .flatMap(config.bodyParser) // add a body to the transformed values
-      .map(config.preTransform(url)) // transform it for the rest of our system
-      .map(config.withSend) // add the send value to the transformed values
-
-  serverInstance.listen(config.port) // Listen on specific port
+  server.listen(port)
 
   return {
-    on,
-    server: serverInstance
+    on: routeOptions =>
+      requestStream
+        .let(standardDataTransforms(routeOptions))
+        .let(pre(routeOptions))
   }
 }
 
 module.exports = createServer
+
+/**
+ * Basic Observable Interface
+ *
+ * @typedef {Object} Observable
+ *
+ * @property {function} subscribe - Our interface to the data
+ */
+
+/**
+ * Route Options
+ *
+ * @typedef {Object} RouteOptions
+ *
+ * @property {string} url - An express-style url string
+ * @property {string} method - The method to listen for ( GET/ POST/ PUT/ etc )
+ */
+
+/**
+ * Our Server Options
+ *
+ * @typedef {Object} ServerOptions
+ *
+ * @property {number} port - The port to listen on
+ * @property {function(RouteOptions -> function(Observable -> Observable))} pre - A HoF for a Lettable operator to run before handlers
+ */
+
+/**
+ * Our Server Interface
+ *
+ * @typedef {Object} ServerInterface
+ *
+ * @property {function(RouteOptions -> Observable)} on - A function that, given RouteOptions returns an observable of all requests to that endpoint and method
+ */

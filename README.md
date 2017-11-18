@@ -1,73 +1,66 @@
 # Observable Server
 
-> REST for the Observable types
+> Like Express but with observables
 
 ## Usage
 
 ```js
-const createServer = require('observable-server')
-const { Observable } = require('rxjs')
-
-// OR
-
 import createServer from 'observable-server'
-import { Observable } from 'rxjs'
+// OR
+const createServer = require('./index.js')
 
-const server = createServer({
-  port: 5001
-}) // Create a server at this port
+const server = createServer()
 
-const db = {
-  save: {
-    User: data => Promise.resolve(data)
-  }
-} // Mock our DB
+// Only listen for `GET` commands
+server
+  .on({ url: '/:collection/:id', method: 'GET' })
+  .subscribe(({ request, response }) =>
+    response.send({
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: {
+        data: {
+          worked: true
+        }
+      }
+    })
+  )
 
-const userPostRequests = server.on({
-  url: '/users',
-  method: 'post'
-}) // Create handler for POST /users
+// Only listen for 'POST' commands
+server
+  .on({ url: '/:collection/:id', method: 'POST' })
+  .subscribe(({ request, response }) =>
+    response.send({
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: {
+        data: {
+          worked: true
+        }
+      }
+    })
+  )
 
-const userRequestSub = userPostRequests
-  .flatMap(({ request: { params, body }, send }) =>
-    Observable.fromPromise(db.save.User(body)).map(data => ({ data, send }))
-  ) // Create User given a body
-  .subscribe(({ send, data }) => {
-    send({ data }) // Send result back to user
-  })
+
+// Only listen for POST to /users
+server
+  .on({ url: '/users', method: 'post' })
+  .subscribe(({ request, resposne }) => { /* ... */ })
 ```
 
-## Demo
+## API
 
-```console
-$ git clone git@github.com:beardedtim/observable-server.git
+`createServer` is the only export from this package. It is a function that takes an `options` object and returns a `ServerInterface`, both of which are defined below.
 
-$ cd observable-server
+* `options`: The options for our server
+  - `port`: The port to listen on
+  - `pre`: An rxjs `lettable` function to run before each route handler
+* `ServerInterface`: The interface for our server stream
+  - `on`: A function that, given a `RouteOptions` shape, returns an observable
+    -  `RouteOptions`
+        * `url`: An express-style url to match on
+        * `method`: The HTTP method to listen on or `'*'` or `undefined` for all methods
 
-$ yarn
-
-$ npx nodemon demo.js
-```
-
-This should start a server at localhost:5001 with a POST handler for `/users` that will return the given `body` as `data`
-
-## Options
-
-The export of this package is `createServer`, which takes an options object which will affect how your stream behaves. Below is the schema for that options object along with what it does
-
-* `port`: This is the port that the server will listen on
-* `initialTransformation`: An HoF that, given an incoming `request` object via `httpServer.on('request')`, returns an `action` object that adheres to `observable-emitter` shape. This is applied before ANYTHING else.
-* `bodyParser`: A function that, given a transformed value via `initialTransformation`, returns an observable that has all previous values plus `body`.
-* `preTransform`: An HoF that, given a string URL will return a function that transforms the incoming request into one with `query`, `params`, etc, and any other needed values. This is basically the pre-middleware hook.
-* `withSend`: A function that, given all transformations above, returns an object that has a `send` function that will send a message to the underlying socket
-
-All of these options have defaults that seem to work as needed, which you can see in `DEFUALT_OPTS` inside of `./index.js`.
-
-## Server Interface
-
-The returned value from `createServer` has two keys:
-
-* `on`: A function of `({ url, method }) => Observable` signature
-  - `url` is an Express-style url string: `/users` or `/users/:id`
-  - `method` is a string of the method wanting to hook into or `'*'` for all methods
-* `server`: The actual `http.createServer` instance in case we need manual control
+For a full demo, check out `./demo.js` or after installing this locally, run `npx nodemon demo.js` and send requests to the server. 
