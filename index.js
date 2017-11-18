@@ -172,7 +172,10 @@ const standardDataTransforms = routeOptions =>
 
 const DEFAULT_OPTS = {
   port: 5000,
-  pre: standardDataTransforms
+  pre: standardDataTransforms,
+  serverStartCallback: server => () => {
+    console.log(server, 'Server has started!')
+  }
 }
 
 /**
@@ -193,7 +196,7 @@ const createServer = opts => {
     })
   })
 
-  server.listen(port)
+  server.listen(port, config.serverStartCallback(server))
 
   return {
     on: routeOptions => requestStream.let(pre(routeOptions))
