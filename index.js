@@ -131,7 +131,7 @@ const transformBody = ({ request, ...args }) =>
  * @typedef {Object} ServerOptions
  * @property {number} port - The port to listen on
  * @property {function} preTransform - A function that takes in a path and returns a function to modify actions on that path
- * @property {function} initialTRansformation - A function that takes in the initial request and transform it to the needed values
+ * @property {function} initialTransformation - A function that takes in the initial request and transform it to the needed values
  * @property {function} withSend - A function that, given a modified request object, adds your `send` function to the request object
  */
 
@@ -155,7 +155,8 @@ const DEFAULT_OPTS = {
         obj.socket.end()
       }
     }
-  })
+  }),
+  bodyParser: transformBody
 }
 
 const createServer = (opts = {}) => {
@@ -183,7 +184,7 @@ const createServer = (opts = {}) => {
     events
       .on(createRegexFromExpressSyntax(url)) // convert `url` to regex
       .filter(filterByMethod(method)) // Only care about specific method
-      .flatMap(transformBody) // add a body to the transformed values
+      .flatMap(config.bodyParser) // add a body to the transformed values
       .map(config.preTransform(url)) // transform it for the rest of our system
       .map(config.withSend) // add the send value to the transformed values
 
